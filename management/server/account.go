@@ -902,7 +902,6 @@ func (am *DefaultAccountManager) lookupUserInCache(ctx context.Context, userID s
 	if err != nil {
 		log.WithContext(ctx).Debugf("failed to get externalCache for key: %s, error: %s", key, err)
 	}
-
 	return ud, nil
 }
 
@@ -992,6 +991,7 @@ func (am *DefaultAccountManager) isCacheFresh(ctx context.Context, accountUsers 
 	// the accountUsers ID list of non integration users from store, we check if cache has all of them
 	// as result of for loop knownUsersCount will have number of users are not presented in the cashed
 	knownUsersCount := len(accountUsers)
+	log.WithContext(ctx).Infof("PERF: checking cache freshness. knownUsersCount: %d, userDataMap: %d", knownUsersCount, len(data))
 	for user, loggedInOnce := range accountUsers {
 		if datum, ok := userDataMap[user]; ok {
 			// check if the matching user data has a pending invite and if the user has logged in once, forcing the cache to be refreshed

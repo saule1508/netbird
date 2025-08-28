@@ -37,8 +37,9 @@ var loginCmd = &cobra.Command{
 		if err := setEnvAndFlags(cmd); err != nil {
 			return fmt.Errorf("set env and flags: %v", err)
 		}
-
+		cmd.Printf("PERF: login cmd Logging starts at %s\n", time.Now().String())
 		ctx := internal.CtxInitState(context.Background())
+		cmd.Printf("PsERF: ctx initial state has been set at %s\n", time.Now().String())
 
 		if hostName != "" {
 			// nolint
@@ -68,7 +69,8 @@ var loginCmd = &cobra.Command{
 			}
 			return nil
 		}
-
+		cmd.Println("PERF: sleep 2 seconds to see if shutdown already happens")
+		time.Sleep(2000 * time.Millisecond) // wait for the service to start
 		if err := doDaemonLogin(ctx, cmd, providedSetupKey, activeProf, username.Username, pm); err != nil {
 			return fmt.Errorf("daemon login failed: %v", err)
 		}
@@ -80,6 +82,9 @@ var loginCmd = &cobra.Command{
 }
 
 func doDaemonLogin(ctx context.Context, cmd *cobra.Command, providedSetupKey string, activeProf *profilemanager.Profile, username string, pm *profilemanager.ProfileManager) error {
+	start := time.Now()
+	fmt.Printf("PERF: Dialing GRPCServer at %s\n", start.String())
+	log.Debugf("PERF: Dialing GRPCServer at %s\n", start.String())
 	conn, err := DialClientGRPCServer(ctx, daemonAddr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon error: %v\n"+
@@ -87,6 +92,7 @@ func doDaemonLogin(ctx context.Context, cmd *cobra.Command, providedSetupKey str
 			"\nnetbird service install \nnetbird service start\n", err)
 	}
 	defer conn.Close()
+	fmt.Printf("PERF: Dialing GRPCServer finished in %s\n", time.Since(start).String())
 
 	client := proto.NewDaemonServiceClient(conn)
 
@@ -94,7 +100,6 @@ func doDaemonLogin(ctx context.Context, cmd *cobra.Command, providedSetupKey str
 	if dnsLabelsValidated != nil {
 		dnsLabelsReq = dnsLabelsValidated.ToSafeStringList()
 	}
-
 	loginRequest := proto.LoginRequest{
 		SetupKey:            providedSetupKey,
 		ManagementUrl:       managementURL,
@@ -115,14 +120,18 @@ func doDaemonLogin(ctx context.Context, cmd *cobra.Command, providedSetupKey str
 
 	err = WithBackOff(func() error {
 		var backOffErr error
+		fmt.Println("PERF: Calling Login with request with backoff")
+		start2 := time.Now()
 		loginResp, backOffErr = client.Login(ctx, &loginRequest)
 		if s, ok := gstatus.FromError(backOffErr); ok && (s.Code() == codes.InvalidArgument ||
 			s.Code() == codes.PermissionDenied ||
 			s.Code() == codes.NotFound ||
 			s.Code() == codes.Unimplemented) {
 			loginErr = backOffErr
+			fmt.Printf("PERF: Calling Login finished with error %s in %s\n", s.Code().String(), time.Since(start2).String())
 			return nil
 		}
+		fmt.Printf("PERF: Calling Login finished in %s\n", time.Since(start2).String())
 		return backOffErr
 	})
 	if err != nil {
@@ -130,15 +139,21 @@ func doDaemonLogin(ctx context.Context, cmd *cobra.Command, providedSetupKey str
 	}
 
 	if loginErr != nil {
+		fmt.Println("PERF: loging failed")
 		return fmt.Errorf("login failed: %v", loginErr)
 	}
 
 	if loginResp.NeedsSSOLogin {
+		fmt.Println("PERF: loging NeedsSSOLogin")
+		start2 := time.Now()
 		if err := handleSSOLogin(ctx, cmd, loginResp, client, pm); err != nil {
+			fmt.Printf("PERF: handleSSOLogin failed in %s\n", time.Since(start2).String())
 			return fmt.Errorf("sso login failed: %v", err)
 		}
+		fmt.Printf("PERF: handleSSOLogin finished in %s\n", time.Since(start2).String())
 	}
-
+	log.Debugf("PERF: Login finished in %s", time.Since(start).String())
+	fmt.Printf("PERF: Login finished in %s\n", time.Since(start).String())
 	return nil
 }
 

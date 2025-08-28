@@ -344,6 +344,8 @@ func (e *Engine) Stop() error {
 // Connections to remote peers are not established here.
 // However, they will be established once an event with a list of peers to connect to will be received from Management Service
 func (e *Engine) Start() error {
+	startTime := time.Now()
+	log.Debug("PERF: starting Netbird Engine")
 	e.syncMsgMux.Lock()
 	defer e.syncMsgMux.Unlock()
 
@@ -359,6 +361,8 @@ func (e *Engine) Start() error {
 	}
 	e.wgInterface = wgIface
 	e.statusRecorder.SetWgIface(wgIface)
+	log.Debugf("PERF: WireGuard interface %s created in %s", e.config.WgIfaceName, time.Since(startTime).String())
+	startTime = time.Now()
 
 	// start flow manager right after interface creation
 	publicKey := e.config.WgPrivateKey.PublicKey()
@@ -381,6 +385,8 @@ func (e *Engine) Start() error {
 		}
 	}
 	e.stateManager.Start()
+	log.Debugf("PERF: statemanager started in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	initialRoutes, dnsConfig, dnsFeatureFlag, err := e.readInitialSettings()
 	if err != nil {
@@ -394,6 +400,8 @@ func (e *Engine) Start() error {
 		return fmt.Errorf("create dns server: %w", err)
 	}
 	e.dnsServer = dnsServer
+	log.Debugf("PERF: dns server created in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	e.routeManager = routemanager.NewManager(routemanager.ManagerConfig{
 		Context:             e.ctx,
@@ -415,16 +423,22 @@ func (e *Engine) Start() error {
 	}
 
 	e.routeManager.SetRouteChangeListener(e.mobileDep.NetworkChangeListener)
+	log.Debugf("PERF: routeManager created in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	if err = e.wgInterfaceCreate(); err != nil {
 		log.Errorf("failed creating tunnel interface %s: [%s]", e.config.WgIfaceName, err.Error())
 		e.close()
 		return fmt.Errorf("create wg interface: %w", err)
 	}
+	log.Debugf("PERF: wginterface created in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	if err := e.createFirewall(); err != nil {
 		return err
 	}
+	log.Debugf("PERF: createFirewall in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	e.udpMux, err = e.wgInterface.Up()
 	if err != nil {
@@ -432,6 +446,8 @@ func (e *Engine) Start() error {
 		e.close()
 		return fmt.Errorf("up wg interface: %w", err)
 	}
+	log.Debugf("PERF: wgInterface up in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	// if inbound conns are blocked there is no need to create the ACL manager
 	if e.firewall != nil && !e.config.BlockInbound {
@@ -443,6 +459,8 @@ func (e *Engine) Start() error {
 		e.close()
 		return fmt.Errorf("initialize dns server: %w", err)
 	}
+	log.Debugf("PERF: dnsServer Initialized in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	iceCfg := icemaker.Config{
 		StunTurn:             &e.stunTurn,
@@ -455,6 +473,8 @@ func (e *Engine) Start() error {
 
 	e.connMgr = NewConnMgr(e.config, e.statusRecorder, e.peerStore, wgIface)
 	e.connMgr.Start(e.ctx)
+	log.Debugf("PERF: connManager created in %s", time.Since(startTime).String())
+	startTime = time.Now()
 
 	e.srWatcher = guard.NewSRWatcher(e.signal, e.relayManager, e.mobileDep.IFaceDiscover, iceCfg)
 	e.srWatcher.Start()
@@ -464,6 +484,7 @@ func (e *Engine) Start() error {
 
 	// starting network monitor at the very last to avoid disruptions
 	e.startNetworkMonitor()
+	log.Debugf("PERF: Finish of Start in %s", time.Since(startTime).String())
 	return nil
 }
 

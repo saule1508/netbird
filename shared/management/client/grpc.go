@@ -327,17 +327,20 @@ func (c *GrpcClient) login(serverKey wgtypes.Key, req *proto.LoginRequest) (*pro
 	operation := func() error {
 		mgmCtx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
 		defer cancel()
-
+		log.Debugf("Creating mgmt context with timeout of 10 secs before invoking Login with request body %v", loginReq)
 		var err error
 		resp, err = c.realClient.Login(mgmCtx, &proto.EncryptedMessage{
 			WgPubKey: c.key.PublicKey().String(),
 			Body:     loginReq,
 		})
 		if err != nil {
+			log.Debugf("failed to invoke Login: %v", err)
 			// retry only on context canceled
 			if s, ok := gstatus.FromError(err); ok && s.Code() == codes.Canceled {
+				log.Debugf("will retry invoking Login due to context canceled, code is %s", s.Code())
 				return err
 			}
+			log.Debugf("failed to invoke Login will not retry: %v", err)
 			return backoff.Permanent(err)
 		}
 

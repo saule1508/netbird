@@ -306,17 +306,23 @@ func parseEnvDuration(envVar string, defaultDuration time.Duration) time.Duratio
 // loginAttempt attempts to login using the provided information. it returns a status in case something fails
 func (s *Server) loginAttempt(ctx context.Context, setupKey, jwtToken string) (internal.StatusType, error) {
 	var status internal.StatusType
+	log.Debugf("PERF: loginAttempt jwtToken is %s\n", jwtToken)
 	err := internal.Login(ctx, s.config, setupKey, jwtToken)
 	if err != nil {
+		log.Debugf("PERF: loginAttempt finished with error %v\n", err)
 		if s, ok := gstatus.FromError(err); ok && (s.Code() == codes.InvalidArgument || s.Code() == codes.PermissionDenied) {
 			log.Warnf("failed login: %v", err)
 			status = internal.StatusNeedsLogin
+			log.Debug("PERF: set status to NeedsLoging")
 		} else {
 			log.Errorf("failed login: %v", err)
 			status = internal.StatusLoginFailed
+			log.Debug("PERF: set status to LoginFailed")
 		}
+		log.Debugf("PERF: loginAttempt finished with error and status %s\n", status)
 		return status, err
 	}
+	log.Debugf("PERF: loginAttempt finished successfully")
 	return "", nil
 }
 
@@ -412,8 +418,10 @@ func (s *Server) SetConfig(callerCtx context.Context, msg *proto.SetConfigReques
 func (s *Server) Login(callerCtx context.Context, msg *proto.LoginRequest) (*proto.LoginResponse, error) {
 	s.mutex.Lock()
 	if s.actCancel != nil {
+		log.Debug("PERF: s.actCancel is not nil but I will not cancel")
 		s.actCancel()
 	}
+	log.Debug("PERF: inside Grpc Login implementation daemon side")
 	ctx, cancel := context.WithCancel(s.rootCtx)
 
 	md, ok := metadata.FromIncomingContext(callerCtx)
@@ -423,15 +431,23 @@ func (s *Server) Login(callerCtx context.Context, msg *proto.LoginRequest) (*pro
 
 	s.actCancel = cancel
 	s.mutex.Unlock()
-
-	if err := restoreResidualState(ctx, s.profileManager.GetStatePath()); err != nil {
-		log.Warnf(errRestoreResidualState, err)
-	}
+	log.Debug("PERF: commented out restore residual state")
+	// if err := restoreResidualState(ctx, s.profileManager.GetStatePath()); err != nil {
+	// 	log.Warnf(errRestoreResidualState, err)
+	// }
 
 	state := internal.CtxGetState(ctx)
+	stateStr, err := state.Status()
+	if err == nil {
+		log.Debugf("PERF: Login GetState %s", stateStr)
+	}
 	defer func() {
 		status, err := state.Status()
+		if err == nil {
+			log.Debugf("PERF: defer Login state %s", stateStr)
+		}
 		if err != nil || (status != internal.StatusNeedsLogin && status != internal.StatusLoginFailed) {
+			log.Debugf("PERF: defer Login set state to Idle because error or not needslogin or loginfailed")
 			state.Set(internal.StatusIdle)
 		}
 	}()
@@ -497,18 +513,22 @@ func (s *Server) Login(callerCtx context.Context, msg *proto.LoginRequest) (*pro
 
 	if _, err := s.loginAttempt(ctx, "", ""); err == nil {
 		state.Set(internal.StatusIdle)
+		log.Debugf("PERF: loginAttempt without error, set state to Idle before returning empty loginResponse")
 		return &proto.LoginResponse{}, nil
 	}
 
 	state.Set(internal.StatusConnecting)
+	log.Debugf("PERF: loginAttempt returned err, set state to Connecting")
 
 	if msg.SetupKey == "" {
+		log.Debug("PERF: new authflow")
 		oAuthFlow, err := auth.NewOAuthFlow(ctx, config, msg.IsUnixDesktopClient)
 		if err != nil {
 			state.Set(internal.StatusLoginFailed)
+			log.Debugf("PERF: authFlow error, set state to StatusLoginFailed")
 			return nil, err
 		}
-
+		log.Debug("PERF: authFlow created, no error")
 		if s.oauthAuthFlow.flow != nil && s.oauthAuthFlow.flow.GetClientID(ctx) == oAuthFlow.GetClientID(context.TODO()) {
 			if s.oauthAuthFlow.expiresAt.After(time.Now().Add(90 * time.Second)) {
 				log.Debugf("using previous oauth flow info")
@@ -536,10 +556,11 @@ func (s *Server) Login(callerCtx context.Context, msg *proto.LoginRequest) (*pro
 		s.oauthAuthFlow.flow = oAuthFlow
 		s.oauthAuthFlow.info = authInfo
 		s.oauthAuthFlow.expiresAt = time.Now().Add(time.Duration(authInfo.ExpiresIn) * time.Second)
+		log.Debugf("PERF: new authflow created with expires at %s", s.oauthAuthFlow.expiresAt.String())
 		s.mutex.Unlock()
 
 		state.Set(internal.StatusNeedsLogin)
-
+		log.Debugf("PERF: Set Status NeedsLogin and return LoginResponse. %v", authInfo)
 		return &proto.LoginResponse{
 			NeedsSSOLogin:           true,
 			VerificationURI:         authInfo.VerificationURI,
@@ -641,7 +662,7 @@ func (s *Server) WaitSSOLogin(callerCtx context.Context, msg *proto.WaitSSOLogin
 func (s *Server) Up(callerCtx context.Context, msg *proto.UpRequest) (*proto.UpResponse, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-
+	log.Debug("PERF: starting Up")
 	if err := restoreResidualState(callerCtx, s.profileManager.GetStatePath()); err != nil {
 		log.Warnf(errRestoreResidualState, err)
 	}
@@ -711,16 +732,20 @@ func (s *Server) Up(callerCtx context.Context, msg *proto.UpRequest) (*proto.UpR
 	defer cancel()
 
 	runningChan := make(chan struct{}, 1) // buffered channel to do not lose the signal
+	log.Debug("PERF: starting connectWithRetryRuns")
 	go s.connectWithRetryRuns(ctx, s.config, s.statusRecorder, runningChan)
 	for {
 		select {
 		case <-runningChan:
+			log.Debug("PERF: connectWithRetryRuns finished, got signal in runningChan")
 			s.isSessionActive.Store(true)
 			return &proto.UpResponse{}, nil
 		case <-callerCtx.Done():
+			log.Debug("PERF: callerCtx done")
 			log.Debug("context done, stopping the wait for engine to become ready")
 			return nil, callerCtx.Err()
 		case <-timeoutCtx.Done():
+			log.Debug("PERF: timeoutCtx done - 50secs")
 			log.Debug("up is timed out, stopping the wait for engine to become ready")
 			return nil, timeoutCtx.Err()
 		}

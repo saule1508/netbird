@@ -125,17 +125,18 @@ func GetKeyQueryCondition(s *SqlStore) string {
 
 // AcquireGlobalLock acquires global lock across all the accounts and returns a function that releases the lock
 func (s *SqlStore) AcquireGlobalLock(ctx context.Context) (unlock func()) {
-	log.WithContext(ctx).Tracef("acquiring global lock")
+	log.WithContext(ctx).Debugf("acquiring global lock")
+
 	start := time.Now()
 	s.globalAccountLock.Lock()
 
 	unlock = func() {
 		s.globalAccountLock.Unlock()
-		log.WithContext(ctx).Tracef("released global lock in %v", time.Since(start))
+		log.WithContext(ctx).Debugf("released global lock in %v", time.Since(start))
 	}
 
 	took := time.Since(start)
-	log.WithContext(ctx).Tracef("took %v to acquire global lock", took)
+	log.WithContext(ctx).Debugf("took %v to acquire global lock", took)
 	if s.metrics != nil {
 		s.metrics.StoreMetrics().CountGlobalLockAcquisitionDuration(took)
 	}
@@ -149,7 +150,7 @@ func (s *SqlStore) SaveAccount(ctx context.Context, account *types.Account) erro
 	defer func() {
 		elapsed := time.Since(start)
 		if elapsed > 1*time.Second {
-			log.WithContext(ctx).Tracef("SaveAccount for account %s exceeded 1s, took: %v", account.Id, elapsed)
+			log.WithContext(ctx).Debugf("SaveAccount for account %s exceeded 1s, took: %v", account.Id, elapsed)
 		}
 	}()
 
@@ -304,9 +305,12 @@ func (s *SqlStore) GetInstallationID() string {
 
 func (s *SqlStore) SavePeer(ctx context.Context, accountID string, peer *nbpeer.Peer) error {
 	// To maintain data integrity, we create a copy of the peer's to prevent unintended updates to other fields.
+	reqStart := time.Now()
 	peerCopy := peer.Copy()
 	peerCopy.AccountID = accountID
-
+	defer func() {
+		log.WithContext(ctx).Debugf("PERF: SavePeer took %v", time.Since(reqStart))
+	}()
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// check if peer exists before saving
 		var peerID string
@@ -361,6 +365,10 @@ func (s *SqlStore) UpdateAccountDomainAttributes(ctx context.Context, accountID 
 }
 
 func (s *SqlStore) SavePeerStatus(ctx context.Context, accountID, peerID string, peerStatus nbpeer.PeerStatus) error {
+	reqStart := time.Now()
+	defer func() {
+		log.WithContext(ctx).Debugf("PERF: SavePeerStatus took %v", time.Since(reqStart))
+	}()
 	var peerCopy nbpeer.Peer
 	peerCopy.Status = &peerStatus
 
@@ -795,7 +803,7 @@ func (s *SqlStore) GetAccount(ctx context.Context, accountID string) (*types.Acc
 		}
 		return nil, status.NewGetAccountFromStoreError(result.Error)
 	}
-
+	startRules := time.Now()
 	// we have to manually preload policy rules as it seems that gorm preloading doesn't do it for us
 	for i, policy := range account.Policies {
 		var rules []*types.PolicyRule
@@ -805,7 +813,7 @@ func (s *SqlStore) GetAccount(ctx context.Context, accountID string) (*types.Acc
 		}
 		account.Policies[i].Rules = rules
 	}
-
+	log.WithContext(ctx).Debugf("PERF: took %d ms to load %d policies rules for account %s", time.Since(startRules).Milliseconds(), len(account.Policies), accountID)
 	account.SetupKeys = make(map[string]*types.SetupKey, len(account.SetupKeysG))
 	for _, key := range account.SetupKeysG {
 		account.SetupKeys[key.Key] = key.Copy()
@@ -1127,8 +1135,12 @@ func (s *SqlStore) GetAccountCreatedBy(ctx context.Context, lockStrength Locking
 
 // SaveUserLastLogin stores the last login time for a user in DB.
 func (s *SqlStore) SaveUserLastLogin(ctx context.Context, accountID, userID string, lastLogin time.Time) error {
+	reqStart := time.Now()
 	ctx, cancel := getDebuggingCtx(ctx)
 	defer cancel()
+	defer func() {
+		log.WithContext(ctx).Debugf("PERF: SaveUserLastLogin took %v", time.Since(reqStart))
+	}()
 
 	var user types.User
 	result := s.db.WithContext(ctx).Take(&user, accountAndIDQueryCondition, accountID, userID)
@@ -1215,7 +1227,7 @@ func NewMysqlStore(ctx context.Context, dsn string, metrics telemetry.AppMetrics
 
 func getGormConfig() *gorm.Config {
 	return &gorm.Config{
-		Logger:          logger.Default.LogMode(logger.Silent),
+		Logger:          logger.Default.LogMode(logger.Info),
 		CreateBatchSize: 400,
 	}
 }

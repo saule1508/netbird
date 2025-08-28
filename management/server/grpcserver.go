@@ -436,8 +436,10 @@ func (s *GRPCServer) parseRequest(ctx context.Context, req *proto.EncryptedMessa
 // In case of the successful registration login is also successful
 func (s *GRPCServer) Login(ctx context.Context, req *proto.EncryptedMessage) (*proto.EncryptedMessage, error) {
 	reqStart := time.Now()
+	log.WithContext(ctx).Info("PERF: grpc login")
 	defer func() {
 		if s.appMetrics != nil {
+			log.WithContext(ctx).Infof("PERF: grpc Login elapsed time: %s", time.Since(reqStart).String())
 			s.appMetrics.GRPCMetrics().CountLoginRequestDuration(time.Since(reqStart))
 		}
 	}()
@@ -469,17 +471,17 @@ func (s *GRPCServer) Login(ctx context.Context, req *proto.EncryptedMessage) (*p
 		log.WithContext(ctx).Warn(msg)
 		return nil, msg
 	}
-
+	start := time.Now()
 	userID, err := s.processJwtToken(ctx, loginReq, peerKey)
 	if err != nil {
 		return nil, err
 	}
-
+	log.Infof("PERF: processJwtToken took %v", time.Since(start))
 	var sshKey []byte
 	if loginReq.GetPeerKeys() != nil {
 		sshKey = loginReq.GetPeerKeys().GetSshPubKey()
 	}
-
+	start = time.Now()
 	peer, netMap, postureChecks, err := s.accountManager.LoginPeer(ctx, types.PeerLogin{
 		WireGuardPubKey: peerKey.String(),
 		SSHKey:          string(sshKey),
@@ -489,6 +491,7 @@ func (s *GRPCServer) Login(ctx context.Context, req *proto.EncryptedMessage) (*p
 		ConnectionIP:    realIP,
 		ExtraDNSLabels:  loginReq.GetDnsLabels(),
 	})
+	log.Infof("PERF: accountManager.LoginPeer took %v", time.Since(start))
 	if err != nil {
 		log.WithContext(ctx).Warnf("failed logging in peer %s: %s", peerKey, err)
 		return nil, mapError(ctx, err)
@@ -498,13 +501,14 @@ func (s *GRPCServer) Login(ctx context.Context, req *proto.EncryptedMessage) (*p
 	if loginReq.GetSetupKey() != "" {
 		s.ephemeralManager.OnPeerDisconnected(ctx, peer)
 	}
+	start = time.Now()
 
 	loginResp, err := s.prepareLoginResponse(ctx, peer, netMap, postureChecks)
 	if err != nil {
 		log.WithContext(ctx).Warnf("failed preparing login response for peer %s: %s", peerKey, err)
 		return nil, status.Errorf(codes.Internal, "failed logging in peer")
 	}
-
+	log.Infof("PERF: prepareLoginResponse took %v", time.Since(start))
 	encryptedResp, err := encryption.EncryptMessage(peerKey, s.wgKey, loginResp)
 	if err != nil {
 		log.WithContext(ctx).Warnf("failed encrypting peer %s message", peer.ID)

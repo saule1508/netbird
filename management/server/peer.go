@@ -801,19 +801,24 @@ func (am *DefaultAccountManager) handlePeerLoginNotFound(ctx context.Context, lo
 // LoginPeer logs in or registers a peer.
 // If peer doesn't exist the function checks whether a setup key or a user is present and registers a new peer if so.
 func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.PeerLogin) (*nbpeer.Peer, *types.NetworkMap, []*posture.Checks, error) {
+	log.WithContext(ctx).Infof("PERF: LoginPeer %s", login.WireGuardPubKey)
 	accountID, err := am.Store.GetAccountIDByPeerPubKey(ctx, login.WireGuardPubKey)
 	if err != nil {
 		return am.handlePeerLoginNotFound(ctx, login, err)
 	}
+	log.WithContext(ctx).Infof("PERF: account %s found for pub key %s", accountID, login.WireGuardPubKey)
 
 	// when the client sends a login request with a JWT which is used to get the user ID,
 	// it means that the client has already checked if it needs login and had been through the SSO flow
 	// so, we can skip this check and directly proceed with the login
 	if login.UserID == "" {
+		log.WithContext(ctx).Infof("PERF: check If peerNeedsLogin for pub key %s", login.WireGuardPubKey)
 		err = am.checkIFPeerNeedsLoginWithoutLock(ctx, accountID, login)
 		if err != nil {
+			log.WithContext(ctx).Infof("PERF: check If peerNeedsLogin for pub key %s returned error %v", login.WireGuardPubKey, err)
 			return nil, nil, nil, err
 		}
+		log.WithContext(ctx).Infof("PERF: check If peerNeedsLogin for pub key %s passed", login.WireGuardPubKey)
 	}
 
 	var peer *nbpeer.Peer
@@ -827,17 +832,19 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
+	log.WithContext(ctx).Infof("PERF: got account settings for pub key %s", login.WireGuardPubKey)
 	err = am.Store.ExecuteInTransaction(ctx, func(transaction store.Store) error {
 		peer, err = transaction.GetPeerByPeerPubKey(ctx, store.LockingStrengthUpdate, login.WireGuardPubKey)
 		if err != nil {
 			return err
 		}
+		log.WithContext(ctx).Infof("PERF: GetPeerByPeerPubKey done for %s", login.WireGuardPubKey)
 
 		// this flag prevents unnecessary calls to the persistent store.
 		shouldStorePeer := false
 
 		if login.UserID != "" {
+			log.WithContext(ctx).Infof("PERF: validating user permissions for login.UserID %s", login.UserID)
 			if peer.UserID != login.UserID {
 				log.Warnf("user mismatch when logging in peer %s: peer user %s, login user %s ", peer.ID, peer.UserID, login.UserID)
 				return status.NewPeerLoginMismatchError()
@@ -847,6 +854,7 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 			if err != nil {
 				return err
 			}
+			log.WithContext(ctx).Infof("PERF: handleUserPeer for user %s", login.UserID)
 
 			if changed {
 				shouldStorePeer = true
@@ -858,7 +866,7 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 		if err != nil {
 			return err
 		}
-
+		log.WithContext(ctx).Infof("PERF: getPeerGroupIDs done for peer %s", peer.ID)
 		isRequiresApproval, isStatusChanged, err = am.integratedPeerValidator.IsNotValidPeer(ctx, accountID, peer, peerGroupIDs, settings.Extra)
 		if err != nil {
 			return err
@@ -866,6 +874,7 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 
 		isPeerUpdated = peer.UpdateMetaIfNew(login.Meta)
 		if isPeerUpdated {
+			log.Infof("PERF: isPeerUpdated true peer %s", peer.ID)
 			am.metrics.AccountManagerMetrics().CountPeerMetUpdate()
 			shouldStorePeer = true
 
@@ -873,8 +882,8 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 			if err != nil {
 				return err
 			}
+			log.Infof("PERF: getPeerPostureChecks done for peer %s", peer.ID)
 		}
-
 		if peer.SSHKey != login.SSHKey {
 			peer.SSHKey = login.SSHKey
 			shouldStorePeer = true
@@ -885,9 +894,13 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 		}
 
 		if shouldStorePeer {
+			start := time.Now()
+			log.WithContext(ctx).Infof("PERF: shouldStorePeer is true peerID = %s", peer.ID)
 			if err = transaction.SavePeer(ctx, accountID, peer); err != nil {
+				log.WithContext(ctx).Errorf("PERF: SavePeer returned error %v duration %s", err, time.Since(start))
 				return err
 			}
+			log.Infof("PERF: SavePeer done for peer %s duration %s", peer.ID, time.Since(start))
 		}
 
 		return nil
@@ -899,7 +912,7 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 	if updateRemotePeers || isStatusChanged || (isPeerUpdated && len(postureChecks) > 0) {
 		am.BufferUpdateAccountPeers(ctx, accountID)
 	}
-
+	log.WithContext(ctx).Infof("PERF: before getValidatedPeerWithMap for pub key %s", login.WireGuardPubKey)
 	return am.getValidatedPeerWithMap(ctx, isRequiresApproval, accountID, peer)
 }
 
