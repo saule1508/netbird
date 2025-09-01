@@ -122,6 +122,11 @@ func doMgmLogin(ctx context.Context, mgmClient *mgm.GrpcClient, pubSSHKey []byte
 		config.LazyConnectionEnabled,
 	)
 	_, err = mgmClient.Login(*serverKey, sysInfo, pubSSHKey, config.DNSLabels)
+	if err != nil {
+		log.Infof("PERF: login attempt finished err=%v", err)
+	} else {
+		log.Infof("PERF: login attempt finished successfully")
+	}
 	return serverKey, err
 }
 

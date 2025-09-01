@@ -317,6 +317,7 @@ func (s *Server) loginAttempt(ctx context.Context, setupKey, jwtToken string) (i
 		}
 		return status, err
 	}
+	log.Info("PERF: login attempt successful")
 	return "", nil
 }
 
@@ -658,9 +659,10 @@ func (s *Server) Up(callerCtx context.Context, msg *proto.UpRequest) (*proto.UpR
 	if status != internal.StatusIdle {
 		return nil, fmt.Errorf("up already in progress: current status %s", status)
 	}
-
+	log.Infof("PERF: up command started, status is %s", status)
 	// it should be nil here, but .
 	if s.actCancel != nil {
+		log.Info("PERF: actCancel was not nil, cancelling")
 		s.actCancel()
 	}
 	ctx, cancel := context.WithCancel(s.rootCtx)
@@ -716,6 +718,7 @@ func (s *Server) Up(callerCtx context.Context, msg *proto.UpRequest) (*proto.UpR
 		select {
 		case <-runningChan:
 			s.isSessionActive.Store(true)
+			log.Infof("PERF: up command finished, status is %s", internal.StatusConnected)
 			return &proto.UpResponse{}, nil
 		case <-callerCtx.Done():
 			log.Debug("context done, stopping the wait for engine to become ready")

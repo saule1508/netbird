@@ -233,13 +233,13 @@ func runInDaemonMode(ctx context.Context, cmd *cobra.Command, pm *profilemanager
 	if err != nil {
 		return fmt.Errorf("unable to get daemon status: %v", err)
 	}
-
+	cmd.Printf("PERF: status %v\n", status.Status)
 	if status.Status == string(internal.StatusConnected) {
 		if !profileSwitched {
 			cmd.Println("Already connected")
 			return nil
 		}
-
+		cmd.Println("PERF: Teardown")
 		if _, err := client.Down(ctx, &proto.DownRequest{}); err != nil {
 			log.Errorf("call service down method: %v", err)
 			return err
@@ -289,13 +289,25 @@ func doDaemonUp(ctx context.Context, cmd *cobra.Command, client proto.DaemonServ
 	err = WithBackOff(func() error {
 		var backOffErr error
 		loginResp, backOffErr = client.Login(ctx, loginRequest)
-		if s, ok := gstatus.FromError(backOffErr); ok && (s.Code() == codes.InvalidArgument ||
-			s.Code() == codes.PermissionDenied ||
-			s.Code() == codes.NotFound ||
-			s.Code() == codes.Unimplemented) {
-			loginErr = backOffErr
-			return nil
+		s, ok := gstatus.FromError(backOffErr)
+		if ok {
+			cmd.Printf("PERF: login attempt error: %v, code: %v\n", s.Message(), s.Code())
+			if s.Code() == codes.InvalidArgument ||
+				s.Code() == codes.PermissionDenied ||
+				s.Code() == codes.NotFound ||
+				s.Code() == codes.Unimplemented {
+				loginErr = backOffErr
+				return nil
+			}
 		}
+		// if s, ok := gstatus.FromError(backOffErr); ok && (s.Code() == codes.InvalidArgument ||
+		// 	s.Code() == codes.PermissionDenied ||
+		// 	s.Code() == codes.NotFound ||
+		// 	s.Code() == codes.Unimplemented) {
+		// 	loginErr = backOffErr
+		// 	return nil
+		// }
+		cmd.Printf("PERF: login backoff retryable error: %v, code: %v\n", s.Message(), s.Code())
 		return backOffErr
 	})
 	if err != nil {
@@ -310,6 +322,7 @@ func doDaemonUp(ctx context.Context, cmd *cobra.Command, client proto.DaemonServ
 		if err := handleSSOLogin(ctx, cmd, loginResp, client, pm); err != nil {
 			return fmt.Errorf("sso login failed: %v", err)
 		}
+		cmd.Printf("PERF: sso login successful\n")
 	}
 
 	if _, err := client.Up(ctx, &proto.UpRequest{
@@ -318,7 +331,7 @@ func doDaemonUp(ctx context.Context, cmd *cobra.Command, client proto.DaemonServ
 	}); err != nil {
 		return fmt.Errorf("call service up method: %v", err)
 	}
-
+	cmd.Printf("PERF: up completed\n")
 	return nil
 }
 

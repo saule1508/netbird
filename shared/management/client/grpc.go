@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 	nbgrpc "github.com/netbirdio/netbird/util/grpc"
 )
 
-const ConnectTimeout = 10 * time.Second
+const DefaultConnectTimeout = 10 * time.Second
 
 const (
 	errMsgMgmtPublicKey    = "failed getting Management Service public key: %s"
@@ -316,24 +317,34 @@ func (c *GrpcClient) login(serverKey wgtypes.Key, req *proto.LoginRequest) (*pro
 	if !c.ready() {
 		return nil, errors.New(errMsgNoMgmtConnection)
 	}
-
+	ConnectTimeout := DefaultConnectTimeout
+	if v, ok := os.LookupEnv("NB_CONNECT_TIMEOUT"); ok && v != "" {
+		CTimeout, err := time.ParseDuration(v)
+		if err != nil {
+			log.Warnf("failed to parse NB_CONNECT_TIMEOUT env var: %v", err)
+		}
+		ConnectTimeout = CTimeout
+	}
+	log.Infof("PERF: using connect timeout of %s", ConnectTimeout.String())
 	loginReq, err := encryption.EncryptMessage(serverKey, c.key, req)
 	if err != nil {
 		log.Errorf("failed to encrypt message: %s", err)
 		return nil, err
 	}
-
 	var resp *proto.EncryptedMessage
 	operation := func() error {
 		mgmCtx, cancel := context.WithTimeout(context.Background(), ConnectTimeout)
 		defer cancel()
 
 		var err error
+		startLogin := time.Now()
 		resp, err = c.realClient.Login(mgmCtx, &proto.EncryptedMessage{
 			WgPubKey: c.key.PublicKey().String(),
 			Body:     loginReq,
 		})
+		log.Infof("PERF: login attempt took %s", time.Since(startLogin))
 		if err != nil {
+			log.Infof("PERF: login attempt finished err=%v", err)
 			// retry only on context canceled
 			if s, ok := gstatus.FromError(err); ok && s.Code() == codes.Canceled {
 				return err
